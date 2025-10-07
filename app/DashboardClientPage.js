@@ -72,7 +72,7 @@ function endOfCurrentMonthLabel(d=new Date()){const e=new Date(d.getFullYear(),d
 function Modal({ title, children, footer, onClose }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
-      <div style={{ width: "min(620px, 92vw)", background: THEME.surface , borderRadius: 12, border: `1px solid ${THEME.divider}`, boxShadow: "0 10px 30px rgba(0,0,0,0.2)" }}>
+      <div style={{ width: "min(620px, 92vw)", background: THEME.surface, borderRadius: 12, border: `1px solid ${THEME.divider}`, boxShadow: "0 10px 30px rgba(0,0,0,0.2)" }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${THEME.divider}`, fontWeight: 800, color: THEME.navy }}>{title}</div>
         <div style={{ padding: 16 }}>{children}</div>
         <div style={{ padding: 12, borderTop: `1px solid ${THEME.divider}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -407,18 +407,16 @@ function AddInvestmentModal({ onClose, currentUser, onCreated }) {
          const u = await r.json();
          setUsers(u);
          // default responsible person = current user if present
-         if (!form.responsiblePerson && currentUser?._id) {
+         if (!form.responsiblePerson) {
            const me = u.find(x => x._id === currentUser._id);
            setForm(f => ({ ...f, responsiblePerson: me?._id || "" }));
          }
          return;
         }
       } catch {}
-      // fallback: minimal list with current user (if available)
-      if (currentUser?._id) {
-        setUsers([{ _id: currentUser._id, name: currentUser.name, role: currentUser.role }]);
-        if (!form.responsiblePerson) setForm(f => ({ ...f, responsiblePerson: currentUser._id }));
-      }
+      // fallback: minimal list with current user
+      setUsers([{ _id: currentUser._id, name: currentUser.name, role: currentUser.role }]);
+      if (!form.responsiblePerson) setForm(f => ({ ...f, responsiblePerson: currentUser._id }));
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -436,10 +434,6 @@ function AddInvestmentModal({ onClose, currentUser, onCreated }) {
   };
 
   const submit = async () => {
-    if (!currentUser?._id) {
-      alert("You're not signed in. Please log in again.");
-      return;
-    }
     const payload = {
       userId: currentUser._id,
       data: {
@@ -543,7 +537,6 @@ function PaymentModal({ onClose, currentUser, investment, onRecorded }) {
   const [date, setDate] = React.useState(new Date().toISOString().slice(0,10));
 
   const submit = async () => {
-    if (!currentUser?._id) { alert("You're not signed in. Please log in again."); return; }
     const payload = { userId: currentUser._id, investmentId: investment._id, amount: Number(amount)||0, date };
     const res = await fetch("/api/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const j = await res.json();
@@ -577,40 +570,9 @@ function PaymentModal({ onClose, currentUser, investment, onRecorded }) {
 }
 
 /* =========================
-   DEV TESTS — run in dev only (basic smoke tests)
-   ========================= */
-function runDevTests() {
-  if (typeof window === 'undefined') return;
-  if (process.env.NODE_ENV === 'production') return;
-  try {
-    const sampleUsers = [{_id:'u1', name:'Alice', role:'user'}, {_id:'u2', name:'Bob', role:'admin'}];
-    const items = [
-      { date:'2025-10-01', status:'Ongoing', projectName:'Project X', yourParticipation: 1000, principalLeft: 5000, responsiblePerson:'u2'},
-      { date:'2025-09-01', status:'Closed', projectName:'Secret', yourParticipation: 0, principalLeft: 0, responsiblePerson:'u1'},
-    ];
-    // myOnly filter
-    const onlyMine = items.filter(inv => (inv.yourParticipation||0) > 0);
-    console.assert(onlyMine.length === 1, 'myOnly filter should keep only items with yourParticipation > 0');
-    // resolveResponsible
-    const nameMap = new Map(sampleUsers.map(u => [u._id, u.name]));
-    const resolve = inv => inv.responsiblePersonName || nameMap.get(inv.responsiblePerson) || String(inv.responsiblePerson || '');
-    console.assert(resolve(items[0])==='Bob', 'resolveResponsible should map id to name');
-    // search rules
-    const adminFilter = (inv, q) => [inv.date, inv.status, inv.projectName, resolve(inv)].some(x => String(x||'').toLowerCase().includes(q));
-    const nonAdminFilter = (inv, q) => [inv.date, inv.status, resolve(inv)].some(x => String(x||'').toLowerCase().includes(q));
-    console.assert(adminFilter(items[0], 'project'), 'admin can search by project name');
-    console.assert(!nonAdminFilter(items[0], 'project'), 'non-admin cannot search by project name');
-    console.info('[DashboardClientPage] Dev tests passed');
-  } catch (e) {
-    console.error('[DashboardClientPage] Dev tests failed', e);
-  }
-}
-
-/* =========================
    Page (fetch server figures/items)
    ========================= */
 export default function DashboardClientPage({ currentUser }) {
-  const router = useRouter();
   const { isDesktop, mainH, cardH } = useViewportHeights({ navH: 56, tabsH: 44, vPad: 16, gridGap: 12 });
   const [activeTab, setActiveTab] = React.useState("summary");
 
@@ -623,34 +585,16 @@ export default function DashboardClientPage({ currentUser }) {
   const [users, setUsers] = React.useState([]);
 
   const load = React.useCallback(async () => {
-    if (!currentUser || !currentUser._id) {
-      console.warn('[DashboardClientPage] Missing currentUser; skipping data load.');
-      return;
-    }
     const res = await fetch(`/api/investments?userId=${encodeURIComponent(currentUser._id)}`);
-    if (!res.ok) { router.replace('/login'); return; }
+    if (!res.ok) { window.location.href = "/login"; return; }
     const j = await res.json();
     setPersonal(j.personal);
     setCompany(j.company);
     setItems(j.investments);
     setUsers(j.users || []);
-  }, [currentUser?._id, router]);
+  }, [currentUser._id]);
   
-  React.useEffect(() => { runDevTests(); }, []);
   React.useEffect(() => { load(); }, [load]);
-
-  // Friendly unauthenticated state to avoid null access
-  if (!currentUser || !currentUser._id) {
-    return (
-      <div style={{ height: '100vh', background: THEME.pageBg, display: 'grid', placeItems: 'center', padding: 24 }}>
-        <div style={{ maxWidth: 520, width: '100%', background: '#fff', border: `1px solid ${THEME.divider}`, borderRadius: 12, boxShadow: '0 6px 24px rgba(0,0,0,0.08)', padding: 20, textAlign: 'center' }}>
-          <h2 style={{ margin: 0, color: THEME.navy }}>You are not signed in</h2>
-          <p style={{ color: THEME.subtext, marginTop: 8 }}>We couldn't find your user session. Please sign in to view your dashboard.</p>
-          <button onClick={() => router.replace('/login')} style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, border: `1px solid ${THEME.accent}`, background: THEME.accent, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>Go to Login</button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div style={{ height: "100vh", overflow: "hidden", background: THEME.pageBg, color: THEME.text }}>
@@ -695,7 +639,7 @@ export default function DashboardClientPage({ currentUser }) {
         )}
       </main>
 
-      {showAdd && currentUser?.role === "admin" && (
+      {showAdd && currentUser.role === "admin" && (
         <AddInvestmentModal
           onClose={() => setShowAdd(false)}
           currentUser={currentUser}
@@ -704,7 +648,7 @@ export default function DashboardClientPage({ currentUser }) {
         />
       )}
 
-      {showPay && currentUser?.role === "admin" && (
+      {showPay && currentUser.role === "admin" && (
         <PaymentModal
           onClose={() => setShowPay(null)}
           currentUser={currentUser}
