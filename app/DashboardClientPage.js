@@ -19,6 +19,9 @@ const THEME = {
   subtext: "#64748b",
   accent: "#4f46e5",
   danger: "#ef4444",
+surface: "#ffffff",
+inputBg: "#ffffff",
+
 };
 
 /* =========================
@@ -69,7 +72,7 @@ function endOfCurrentMonthLabel(d=new Date()){const e=new Date(d.getFullYear(),d
 function Modal({ title, children, footer, onClose }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
-      <div style={{ width: "min(620px, 92vw)", background: THEME.cardBg, borderRadius: 12, border: `1px solid ${THEME.divider}`, boxShadow: "0 10px 30px rgba(0,0,0,0.2)" }}>
+      <div style={{ width: "min(620px, 92vw)", background: THEME.surface , borderRadius: 12, border: `1px solid ${THEME.divider}`, boxShadow: "0 10px 30px rgba(0,0,0,0.2)" }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${THEME.divider}`, fontWeight: 800, color: THEME.navy }}>{title}</div>
         <div style={{ padding: 16 }}>{children}</div>
         <div style={{ padding: 12, borderTop: `1px solid ${THEME.divider}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -173,7 +176,7 @@ function StatsCard({ title, figures, height, isDesktop }) {
 /* =========================
    Investments (Accordion)
    ========================= */
-function InvestmentsList({ items = [], currentUser, onOpenPayment, users = [], filter = "" }) {
+function InvestmentsList({ items = [], currentUser, onOpenPayment, users = [], filter = "", myOnly = false }) {
   const [openIndex, setOpenIndex] = React.useState(null);
   const isAdmin = currentUser?.role === "admin";
   const toggle = (i) => setOpenIndex(prev => prev === i ? null : i);
@@ -184,11 +187,39 @@ function InvestmentsList({ items = [], currentUser, onOpenPayment, users = [], f
     return m;
   }, [users]);
 
-  const filteredItems = items.filter(inv => 
-    inv.date?.toLowerCase().includes(filter.toLowerCase()) || 
-    inv.projectName?.toLowerCase().includes(filter.toLowerCase()) ||
-    inv.status?.toLowerCase().includes(filter.toLowerCase())
-  );
+  // resolve a responsible person's display name from the investment record
+  const resolveResponsible = React.useCallback((inv) => {
+    // common shapes: inv.responsiblePerson may be a userId or a name string
+    // prefer explicit display fields if present
+    const fromDisplay = inv.responsiblePersonName || inv.responsible || inv.responsible_name;
+    if (fromDisplay) return String(fromDisplay);
+    const maybeId = inv.responsiblePerson || inv.responsible_id || inv.responsible;
+    if (!maybeId) return "";
+    return nameById.get(maybeId) || String(maybeId);
+  }, [nameById]);
+
+  const lower = filter.trim().toLowerCase();
+
+  let filteredItems = items;
+
+  // "My Investments" toggle: show only investments where the user participates (> 0)
+  if (myOnly) {
+    filteredItems = filteredItems.filter(inv => (inv.yourParticipation || 0) > 0);
+  }
+
+  // Search rules:
+  // - Admin: date, projectName, status, responsible person
+  // - Non-admin: date, status, responsible person (NOT projectName)
+  if (lower) {
+    filteredItems = filteredItems.filter(inv => {
+      const byDate = String(inv.date || "").toLowerCase().includes(lower);
+      const byStatus = String(inv.status || "").toLowerCase().includes(lower);
+      const byResponsible = resolveResponsible(inv).toLowerCase().includes(lower);
+      const byProject = String(inv.projectName || "").toLowerCase().includes(lower);
+      return isAdmin ? (byDate || byStatus || byResponsible || byProject)
+                     : (byDate || byStatus || byResponsible);
+    });
+  }
 
   return (
     <div style={{ marginTop: 8, height: "100%", overflowY: "auto", paddingRight: 8 }}>
@@ -201,6 +232,7 @@ function InvestmentsList({ items = [], currentUser, onOpenPayment, users = [], f
       {filteredItems.map((inv, i) => {
         const isOpen = openIndex === i;
         const borderColor = inv.status === "Ongoing" ? THEME.navy : THEME.divider;
+        const responsibleDisplay = resolveResponsible(inv);
 
         return (
           <div key={inv._id || i} style={{ border: `2px solid ${borderColor}`, borderRadius: 10, marginBottom: 10, background: THEME.cardBg, overflow: "hidden" }}>
@@ -209,6 +241,8 @@ function InvestmentsList({ items = [], currentUser, onOpenPayment, users = [], f
               <div>
                 <div style={{ fontSize: 14, color: THEME.navy, fontWeight: 800 }}>{inv.date || "-"}</div>
                 <div style={{ fontSize: 12, color: THEME.subtext, marginTop: 4 }}>Status: <strong style={{ color: THEME.navy }}>{inv.status}</strong></div>
+                {/* Always helpful context */}
+                <div style={{ fontSize: 12, color: THEME.subtext, marginTop: 4 }}>Responsible: <strong style={{ color: THEME.navy }}>{responsibleDisplay || '-'}</strong></div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ fontSize: 14, color: THEME.navy, fontWeight: 800 }}>Left: {formatUGX(inv.principalLeft || 0)}</div>
@@ -292,9 +326,16 @@ function InvestmentsList({ items = [], currentUser, onOpenPayment, users = [], f
   );
 }
 
-function InvestmentsPanel({ items = [], currentUser, onOpenAdd, onOpenPayment }) {
+function InvestmentsPanel({ items = [], currentUser, onOpenAdd, onOpenPayment, users = [] }) {
   const [filter, setFilter] = React.useState("");
+  const [myOnly, setMyOnly] = React.useState(false);
   const isAdmin = currentUser?.role === "admin";
+
+  // placeholder and helper text differ by role
+  const placeholder = isAdmin
+    ? "Search by date, project, status, or responsible..."
+    : "Search by date, status, or responsible...";
+
   return (
     <div style={{ border: `1px solid ${THEME.divider}`, borderRadius: "12px 12px 8px 8px", padding: 12, background: THEME.cardBg, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
@@ -307,28 +348,33 @@ function InvestmentsPanel({ items = [], currentUser, onOpenAdd, onOpenPayment })
           </button>
         )}
       </div>
-      {isAdmin && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <div style={{ position: "relative", flex: 1 }}>
-            <Search size={16} color={THEME.subtext} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
-            <input 
-              value={filter} 
-              onChange={(e) => setFilter(e.target.value)} 
-              placeholder="Search by date, project, or status..." 
-              style={{ 
-                width: "100%", 
-                padding: "8px 12px 8px 36px", 
-                border: `1px solid ${THEME.divider}`, 
-                borderRadius: 8, 
-                fontSize: 14 
-              }} 
-            />
-          </div>
+
+      {/* Controls row: search (for ALL) + My Investments toggle */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 220 }}>
+          <Search size={16} color={THEME.subtext} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+          <input 
+            value={filter} 
+            onChange={(e) => setFilter(e.target.value)} 
+            placeholder={placeholder} 
+            style={{ 
+              width: "100%", 
+              padding: "8px 12px 8px 36px", 
+              border: `1px solid ${THEME.divider}`, 
+              borderRadius: 8, 
+              fontSize: 14 
+            }} 
+          />
         </div>
-      )}
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${THEME.divider}`, background: "#fff", cursor: "pointer", userSelect: "none" }}>
+          <input type="checkbox" checked={myOnly} onChange={(e)=>setMyOnly(e.target.checked)} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: THEME.navy }}>My Investments</span>
+        </label>
+      </div>
+
       <div style={{ height: 1, background: THEME.divider, margin: "0 0 6px" }} />
       <div style={{ flex: 1, minHeight: 0 }}>
-        <InvestmentsList items={items} currentUser={currentUser} onOpenPayment={onOpenPayment} filter={filter} />
+        <InvestmentsList items={items} currentUser={currentUser} onOpenPayment={onOpenPayment} filter={filter} myOnly={myOnly} users={users} />
       </div>
     </div>
   );
@@ -361,16 +407,18 @@ function AddInvestmentModal({ onClose, currentUser, onCreated }) {
          const u = await r.json();
          setUsers(u);
          // default responsible person = current user if present
-         if (!form.responsiblePerson) {
+         if (!form.responsiblePerson && currentUser?._id) {
            const me = u.find(x => x._id === currentUser._id);
            setForm(f => ({ ...f, responsiblePerson: me?._id || "" }));
          }
          return;
         }
       } catch {}
-      // fallback: minimal list with current user
-      setUsers([{ _id: currentUser._id, name: currentUser.name, role: currentUser.role }]);
-      if (!form.responsiblePerson) setForm(f => ({ ...f, responsiblePerson: currentUser._id }));
+      // fallback: minimal list with current user (if available)
+      if (currentUser?._id) {
+        setUsers([{ _id: currentUser._id, name: currentUser.name, role: currentUser.role }]);
+        if (!form.responsiblePerson) setForm(f => ({ ...f, responsiblePerson: currentUser._id }));
+      }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -388,6 +436,10 @@ function AddInvestmentModal({ onClose, currentUser, onCreated }) {
   };
 
   const submit = async () => {
+    if (!currentUser?._id) {
+      alert("You're not signed in. Please log in again.");
+      return;
+    }
     const payload = {
       userId: currentUser._id,
       data: {
@@ -491,6 +543,7 @@ function PaymentModal({ onClose, currentUser, investment, onRecorded }) {
   const [date, setDate] = React.useState(new Date().toISOString().slice(0,10));
 
   const submit = async () => {
+    if (!currentUser?._id) { alert("You're not signed in. Please log in again."); return; }
     const payload = { userId: currentUser._id, investmentId: investment._id, amount: Number(amount)||0, date };
     const res = await fetch("/api/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const j = await res.json();
@@ -524,9 +577,40 @@ function PaymentModal({ onClose, currentUser, investment, onRecorded }) {
 }
 
 /* =========================
+   DEV TESTS — run in dev only (basic smoke tests)
+   ========================= */
+function runDevTests() {
+  if (typeof window === 'undefined') return;
+  if (process.env.NODE_ENV === 'production') return;
+  try {
+    const sampleUsers = [{_id:'u1', name:'Alice', role:'user'}, {_id:'u2', name:'Bob', role:'admin'}];
+    const items = [
+      { date:'2025-10-01', status:'Ongoing', projectName:'Project X', yourParticipation: 1000, principalLeft: 5000, responsiblePerson:'u2'},
+      { date:'2025-09-01', status:'Closed', projectName:'Secret', yourParticipation: 0, principalLeft: 0, responsiblePerson:'u1'},
+    ];
+    // myOnly filter
+    const onlyMine = items.filter(inv => (inv.yourParticipation||0) > 0);
+    console.assert(onlyMine.length === 1, 'myOnly filter should keep only items with yourParticipation > 0');
+    // resolveResponsible
+    const nameMap = new Map(sampleUsers.map(u => [u._id, u.name]));
+    const resolve = inv => inv.responsiblePersonName || nameMap.get(inv.responsiblePerson) || String(inv.responsiblePerson || '');
+    console.assert(resolve(items[0])==='Bob', 'resolveResponsible should map id to name');
+    // search rules
+    const adminFilter = (inv, q) => [inv.date, inv.status, inv.projectName, resolve(inv)].some(x => String(x||'').toLowerCase().includes(q));
+    const nonAdminFilter = (inv, q) => [inv.date, inv.status, resolve(inv)].some(x => String(x||'').toLowerCase().includes(q));
+    console.assert(adminFilter(items[0], 'project'), 'admin can search by project name');
+    console.assert(!nonAdminFilter(items[0], 'project'), 'non-admin cannot search by project name');
+    console.info('[DashboardClientPage] Dev tests passed');
+  } catch (e) {
+    console.error('[DashboardClientPage] Dev tests failed', e);
+  }
+}
+
+/* =========================
    Page (fetch server figures/items)
    ========================= */
 export default function DashboardClientPage({ currentUser }) {
+  const router = useRouter();
   const { isDesktop, mainH, cardH } = useViewportHeights({ navH: 56, tabsH: 44, vPad: 16, gridGap: 12 });
   const [activeTab, setActiveTab] = React.useState("summary");
 
@@ -539,16 +623,34 @@ export default function DashboardClientPage({ currentUser }) {
   const [users, setUsers] = React.useState([]);
 
   const load = React.useCallback(async () => {
+    if (!currentUser || !currentUser._id) {
+      console.warn('[DashboardClientPage] Missing currentUser; skipping data load.');
+      return;
+    }
     const res = await fetch(`/api/investments?userId=${encodeURIComponent(currentUser._id)}`);
-    if (!res.ok) { window.location.href = "/login"; return; }
+    if (!res.ok) { router.replace('/login'); return; }
     const j = await res.json();
     setPersonal(j.personal);
     setCompany(j.company);
     setItems(j.investments);
     setUsers(j.users || []);
-  }, [currentUser._id]);
+  }, [currentUser?._id, router]);
   
+  React.useEffect(() => { runDevTests(); }, []);
   React.useEffect(() => { load(); }, [load]);
+
+  // Friendly unauthenticated state to avoid null access
+  if (!currentUser || !currentUser._id) {
+    return (
+      <div style={{ height: '100vh', background: THEME.pageBg, display: 'grid', placeItems: 'center', padding: 24 }}>
+        <div style={{ maxWidth: 520, width: '100%', background: '#fff', border: `1px solid ${THEME.divider}`, borderRadius: 12, boxShadow: '0 6px 24px rgba(0,0,0,0.08)', padding: 20, textAlign: 'center' }}>
+          <h2 style={{ margin: 0, color: THEME.navy }}>You are not signed in</h2>
+          <p style={{ color: THEME.subtext, marginTop: 8 }}>We couldn't find your user session. Please sign in to view your dashboard.</p>
+          <button onClick={() => router.replace('/login')} style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, border: `1px solid ${THEME.accent}`, background: THEME.accent, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>Go to Login</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ height: "100vh", overflow: "hidden", background: THEME.pageBg, color: THEME.text }}>
@@ -593,7 +695,7 @@ export default function DashboardClientPage({ currentUser }) {
         )}
       </main>
 
-      {showAdd && currentUser.role === "admin" && (
+      {showAdd && currentUser?.role === "admin" && (
         <AddInvestmentModal
           onClose={() => setShowAdd(false)}
           currentUser={currentUser}
@@ -602,7 +704,7 @@ export default function DashboardClientPage({ currentUser }) {
         />
       )}
 
-      {showPay && currentUser.role === "admin" && (
+      {showPay && currentUser?.role === "admin" && (
         <PaymentModal
           onClose={() => setShowPay(null)}
           currentUser={currentUser}
